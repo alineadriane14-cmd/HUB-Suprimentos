@@ -3866,6 +3866,12 @@ window.addEventListener('hub-ready', () => {
 #hub-module-cronograma .monthly-side{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 #hub-module-cronograma .monthly-check{font-size:12px;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--paper);color:var(--ink);cursor:pointer;}
 #hub-module-cronograma .monthly-check.done{background:var(--done);color:var(--paper);border-color:var(--done);}
+#hub-module-cronograma .weekday-check-group{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;}
+#hub-module-cronograma .weekday-check-group label{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-soft);cursor:pointer;font-family:var(--font-mono);}
+#hub-module-cronograma .monthly-row .task-del{border:none;background:transparent;color:var(--ink-faint);cursor:pointer;font-size:16px;line-height:1;padding:2px 4px;}
+#hub-module-cronograma .monthly-row .task-del:hover{color:var(--accent);}
+#hub-module-cronograma .add-monthly-btn{font-size:13px;color:var(--ink-soft);background:transparent;border:none;cursor:pointer;padding:8px 0 0;display:block;}
+#hub-module-cronograma .add-monthly-btn:hover{color:var(--ink);}
 @media (max-width:640px){
 #hub-module-cronograma .grid2{grid-template-columns:1fr;}
 }#hub-module-cronograma .crono-readonly-banner{display:none;background:var(--accent-bg);border:1px solid var(--accent);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--accent-ink);}
@@ -3873,7 +3879,9 @@ window.addEventListener('hub-ready', () => {
 #hub-module-cronograma.crono-readonly .task-check,
 #hub-module-cronograma.crono-readonly .task-del,
 #hub-module-cronograma.crono-readonly .add-task-btn,
+#hub-module-cronograma.crono-readonly .add-monthly-btn,
 #hub-module-cronograma.crono-readonly #crono-btn-urgent,
+#hub-module-cronograma.crono-readonly #crono-btn-weekly,
 #hub-module-cronograma.crono-readonly #crono-btn-reset,
 #hub-module-cronograma.crono-readonly .monthly-check,
 #hub-module-cronograma.crono-readonly .member-name-input,
@@ -3897,8 +3905,9 @@ window.addEventListener('hub-ready', () => {
 
   <div class="toolbar">
     <div class="tabs" id="crono-tabs"></div>
-    <div style="display:flex;gap:8px;">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn urgent" id="crono-btn-urgent">+ Demanda urgente da obra</button>
+      <button class="btn" id="crono-btn-weekly">+ Tarefa semanal recorrente</button>
       <button class="btn" id="crono-btn-reset">Reiniciar marcações</button>
     </div>
   </div>
@@ -3917,7 +3926,58 @@ window.addEventListener('hub-ready', () => {
     </div>
   </div>
 
+  <div class="urgent-panel" id="crono-weekly-panel">
+    <h3>Nova tarefa semanal recorrente</h3>
+    <div class="urgent-grid">
+      <select id="crono-w-member"></select>
+      <input type="time" id="crono-w-time" value="08:00">
+      <select id="crono-w-cat"></select>
+    </div>
+    <div class="weekday-check-group" id="crono-w-days"></div>
+    <input type="text" id="crono-w-title" placeholder="Descreva a tarefa" style="margin-top:8px;">
+    <div class="add-form-actions">
+      <button id="crono-w-cancel">Cancelar</button>
+      <button class="confirm" id="crono-w-confirm">Adicionar</button>
+    </div>
+  </div>
+
+  <div class="urgent-panel" id="crono-monthly-panel">
+    <h3>Nova tarefa mensal recorrente</h3>
+    <div class="urgent-grid">
+      <select id="crono-m-member"></select>
+      <select id="crono-m-tipo">
+        <option value="diaFixo">Todo dia __ do mês</option>
+        <option value="diaSemana">Toda [posição] [dia da semana] do mês</option>
+      </select>
+    </div>
+    <div class="urgent-grid" id="crono-m-diafixo-row">
+      <input type="number" id="crono-m-dia" min="1" max="31" value="10" placeholder="Dia do mês (1-31)">
+    </div>
+    <div class="urgent-grid" id="crono-m-diasemana-row" style="display:none;">
+      <select id="crono-m-posicao">
+        <option value="primeira">Primeira</option>
+        <option value="segunda">Segunda</option>
+        <option value="terceira">Terceira</option>
+        <option value="quarta">Quarta</option>
+        <option value="ultima">Última</option>
+      </select>
+      <select id="crono-m-dow">
+        <option value="seg">Segunda-feira</option>
+        <option value="ter">Terça-feira</option>
+        <option value="qua">Quarta-feira</option>
+        <option value="qui">Quinta-feira</option>
+        <option value="sex">Sexta-feira</option>
+      </select>
+    </div>
+    <input type="text" id="crono-m-title" placeholder="Descreva a tarefa" style="margin-top:8px;">
+    <div class="add-form-actions">
+      <button id="crono-m-cancel">Cancelar</button>
+      <button class="confirm" id="crono-m-confirm">Adicionar</button>
+    </div>
+  </div>
+
   <div class="monthly-card" id="crono-monthly-card"></div>
+  <div class="monthly-card" id="crono-monthly-custom-card"></div>
 
   <div id="crono-days-container"></div>
 </div>
@@ -3954,8 +4014,52 @@ function crono_minutesToHHMM(mins){
   return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
 }
 
+// ─── Reset automático semanal/mensal das tarefas recorrentes ───────────────
+// Em vez de um booleano "done" que precisa ser zerado manualmente toda
+// semana (botão "Reiniciar marcações"), guardamos a CHAVE da semana (ou mês)
+// em que a tarefa foi marcada. Se a chave não bate com a semana/mês atual,
+// a tarefa volta a aparecer como pendente sozinha — sem precisar de ação
+// manual nenhuma.
+function crono_mondayOf(date){
+  const d = new Date(date); d.setHours(0,0,0,0);
+  const dow = d.getDay(); // 0=dom..6=sáb
+  const diff = (dow===0 ? -6 : 1-dow);
+  return crono_addDays(d, diff);
+}
+function crono_currentWeekKey(){ return crono_fmtKey(crono_mondayOf(new Date())); }
+function crono_isTaskDone(task){ return !!task.doneWeekKey && task.doneWeekKey === crono_currentWeekKey(); }
+
+const crono_DOW_NUM = {seg:1, ter:2, qua:3, qui:4, sex:5};
+function crono_currentMonthKey(){
+  const t = crono_todayNoTime();
+  return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}`;
+}
+// Calcula a data deste mês em que uma regra de recorrência mensal cai
+function crono_dataRecorrenciaMensal(rule, year, month){
+  const lastDay = new Date(year, month+1, 0).getDate();
+  if(rule.type === 'diaFixo'){
+    return new Date(year, month, Math.min(rule.dia, lastDay));
+  }
+  // diaSemana: encontra todas as ocorrências do dia da semana pedido no mês
+  const alvo = crono_DOW_NUM[rule.dow];
+  const ocorrencias = [];
+  for(let d=1; d<=lastDay; d++){
+    const dt = new Date(year, month, d);
+    if(dt.getDay() === alvo) ocorrencias.push(dt);
+  }
+  const idx = {primeira:0, segunda:1, terceira:2, quarta:3};
+  if(rule.posicao === 'ultima') return ocorrencias[ocorrencias.length-1];
+  return ocorrencias[idx[rule.posicao]] || ocorrencias[ocorrencias.length-1];
+}
+function crono_descreveRecorrencia(rule){
+  if(rule.type === 'diaFixo') return `Todo dia ${rule.dia}`;
+  const posLabel = {primeira:'primeira', segunda:'segunda', terceira:'terceira', quarta:'quarta', ultima:'última'}[rule.posicao];
+  const dowLabel = {seg:'segunda-feira', ter:'terça-feira', qua:'quarta-feira', qui:'quinta-feira', sex:'sexta-feira'}[rule.dow];
+  return `Toda ${posLabel} ${dowLabel} do mês`;
+}
+
 function crono_defaultState(){
-  const t = (day, member, hora, category, title, extra) => Object.assign({id:crono_uid(), day, member, hora, category, title, done:false}, extra||{});
+  const t = (day, member, hora, category, title, extra) => Object.assign({id:crono_uid(), day, member, hora, category, title, doneWeekKey:null}, extra||{});
   const alineHorarios = {seg:'08:00-18:00', ter:'08:00-18:00', qua:'08:00-18:00', qui:'08:00-18:00', sex:'08:00-18:00'};
   const marcosHorarios = {seg:'08:00-12:00', ter:'08:00-12:00', qua:'08:00-12:00', qui:'08:00-12:00', sex:'08:00-18:00'};
 
@@ -3999,7 +4103,8 @@ function crono_defaultState(){
       cestaDoneMonth: null,
       tabelaDoneWindows: [],
       limpezaDone: {}
-    }
+    },
+    monthlyCustom: []
   };
 }
 
@@ -4010,13 +4115,26 @@ async function crono_loadState(){
     const data = await window._fbCrono.load();
     if(data && data.state){
       const parsed = data.state;
+      let migrated = false;
       if(!parsed.tasks.some(t => t.category==='msg')){
         ['seg','ter','qua','qui','sex'].forEach(day => {
-          parsed.tasks.push({id:crono_uid(), day, member:'m1', hora:'08:00', category:'msg', title:'Responder mensagens e e-mails', done:false});
-          parsed.tasks.push({id:crono_uid(), day, member:'m2', hora:'08:00', category:'msg', title:'Responder mensagens e e-mails', done:false});
+          parsed.tasks.push({id:crono_uid(), day, member:'m1', hora:'08:00', category:'msg', title:'Responder mensagens e e-mails', doneWeekKey:null});
+          parsed.tasks.push({id:crono_uid(), day, member:'m2', hora:'08:00', category:'msg', title:'Responder mensagens e e-mails', doneWeekKey:null});
         });
-        await crono_saveState(parsed);
+        migrated = true;
       }
+      // Migração: estados salvos antes do reset automático usavam um booleano
+      // "done" fixo. Convertemos pra doneWeekKey (assumindo a semana atual
+      // pras que já estavam marcadas, pra não "desmarcar" nada na virada).
+      parsed.tasks.forEach(t => {
+        if(t.doneWeekKey === undefined){
+          t.doneWeekKey = t.done ? crono_currentWeekKey() : null;
+          delete t.done;
+          migrated = true;
+        }
+      });
+      if(!parsed.monthlyCustom){ parsed.monthlyCustom = []; migrated = true; }
+      if(migrated) await crono_saveState(parsed);
       return parsed;
     }
   }catch(e){}
@@ -4042,6 +4160,7 @@ function crono_render(){
   if(root) root.classList.toggle('crono-readonly', !window.HUB_CAN_EDIT);
   crono_renderTabs();
   crono_renderMonthly();
+  crono_renderMonthlyCustom();
   crono_renderDays();
   document.getElementById('crono-stamp-date').textContent = new Date().toLocaleDateString('pt-BR');
 }
@@ -4077,7 +4196,7 @@ function crono_buildMemberCard(day, memberId){
   const member = crono_state.members[memberId];
   const tasks = crono_state.tasks.filter(t => t.day===day && t.member===memberId)
     .sort((a,b)=> a.hora.localeCompare(b.hora));
-  const done = tasks.filter(t=>t.done).length;
+  const done = tasks.filter(t=>crono_isTaskDone(t)).length;
   const pct = tasks.length ? Math.round(done/tasks.length*100) : 0;
 
   const card = document.createElement('div');
@@ -4138,18 +4257,19 @@ function crono_addMedicao(day){
   mins = Math.round(mins/5)*5;
   crono_state.tasks.filter(t => t.day===day && t.member==='m1' && crono_hhmmToMinutes(t.hora) >= mins)
     .forEach(t => { t.hora = crono_minutesToHHMM(crono_hhmmToMinutes(t.hora) + 30); });
-  crono_state.tasks.push({id:crono_uid(), day, member:'m1', hora:crono_minutesToHHMM(mins), category:'medicao', title:'Medição', done:false, duration:30});
+  crono_state.tasks.push({id:crono_uid(), day, member:'m1', hora:crono_minutesToHHMM(mins), category:'medicao', title:'Medição', doneWeekKey:null, duration:30});
   crono_saveState(crono_state);
   crono_render();
 }
 
 function crono_buildTaskItem(task){
+  const done = crono_isTaskDone(task);
   const li = document.createElement('li');
-  li.className = 'task' + (task.done?' done':'');
+  li.className = 'task' + (done?' done':'');
   const check = document.createElement('button');
-  check.className = 'task-check' + (task.done?' checked':'');
+  check.className = 'task-check' + (done?' checked':'');
   check.setAttribute('aria-label','Marcar como concluída');
-  check.onclick = () => { if(!window.HUB_CAN_EDIT)return; task.done = !task.done; crono_saveState(crono_state); crono_render(); };
+  check.onclick = () => { if(!window.HUB_CAN_EDIT)return; task.doneWeekKey = crono_isTaskDone(task) ? null : crono_currentWeekKey(); crono_saveState(crono_state); crono_render(); };
   li.appendChild(check);
 
   const body = document.createElement('div');
@@ -4205,7 +4325,7 @@ function crono_buildAddForm(day, memberId){
   form.querySelector('.confirm').onclick = () => {
     if(!window.HUB_CAN_EDIT) return;
     if(!titleInput.value.trim()) return;
-    crono_state.tasks.push({id:crono_uid(), day, member:memberId, hora:timeInput.value||'08:00', category:catSelect.value, title:titleInput.value.trim(), done:false});
+    crono_state.tasks.push({id:crono_uid(), day, member:memberId, hora:timeInput.value||'08:00', category:catSelect.value, title:titleInput.value.trim(), doneWeekKey:null});
     crono_saveState(crono_state);
     crono_render();
   };
@@ -4214,7 +4334,7 @@ function crono_buildAddForm(day, memberId){
 
 document.getElementById('crono-btn-reset').onclick = () => {
   if(!window.HUB_CAN_EDIT) return;
-  crono_state.tasks.forEach(t => t.done = false);
+  crono_state.tasks.forEach(t => t.doneWeekKey = null);
   crono_saveState(crono_state);
   crono_render();
 };
@@ -4236,12 +4356,72 @@ document.getElementById('crono-u-confirm').onclick = () => {
   const hora = document.getElementById('crono-u-time').value || '08:00';
   const title = document.getElementById('crono-u-title').value.trim();
   if(!title) return;
-  crono_state.tasks.push({id:crono_uid(), day, member, hora, category:'obra', title, done:false});
+  crono_state.tasks.push({id:crono_uid(), day, member, hora, category:'obra', title, doneWeekKey:null});
   document.getElementById('crono-u-title').value = '';
   urgentPanel.classList.remove('open');
   crono_activeDay = day;
   crono_saveState(crono_state);
   crono_render();
+};
+
+// ─── Tarefa semanal recorrente (adiciona em vários dias de uma vez) ────────
+const weeklyPanel = document.getElementById('crono-weekly-panel');
+document.getElementById('crono-btn-weekly').onclick = () => {
+  if(!window.HUB_CAN_EDIT) return;
+  const memberSel = document.getElementById('crono-w-member');
+  const catSel = document.getElementById('crono-w-cat');
+  memberSel.innerHTML = Object.entries(crono_state.members).map(([k,v])=>`<option value="${k}">${v.name}</option>`).join('');
+  catSel.innerHTML = Object.entries(crono_CATS).map(([k,v])=>`<option value="${k}">${v.label}</option>`).join('');
+  const daysEl = document.getElementById('crono-w-days');
+  daysEl.innerHTML = crono_DAYS.map(d => `
+    <label><input type="checkbox" value="${d.key}" checked> ${d.label}</label>
+  `).join('');
+  weeklyPanel.classList.add('open');
+};
+document.getElementById('crono-w-cancel').onclick = () => weeklyPanel.classList.remove('open');
+document.getElementById('crono-w-confirm').onclick = () => {
+  if(!window.HUB_CAN_EDIT) return;
+  const member = document.getElementById('crono-w-member').value;
+  const hora = document.getElementById('crono-w-time').value || '08:00';
+  const category = document.getElementById('crono-w-cat').value;
+  const title = document.getElementById('crono-w-title').value.trim();
+  const diasEscolhidos = [...document.querySelectorAll('#crono-w-days input:checked')].map(el => el.value);
+  if(!title || diasEscolhidos.length===0) return;
+  diasEscolhidos.forEach(day => {
+    crono_state.tasks.push({id:crono_uid(), day, member, hora, category, title, doneWeekKey:null});
+  });
+  document.getElementById('crono-w-title').value = '';
+  weeklyPanel.classList.remove('open');
+  crono_saveState(crono_state);
+  crono_render();
+};
+
+// ─── Tarefa mensal recorrente personalizada ────────────────────────────────
+const monthlyPanel = document.getElementById('crono-monthly-panel');
+document.getElementById('crono-m-tipo').onchange = (e) => {
+  const isDiaFixo = e.target.value === 'diaFixo';
+  document.getElementById('crono-m-diafixo-row').style.display = isDiaFixo ? '' : 'none';
+  document.getElementById('crono-m-diasemana-row').style.display = isDiaFixo ? 'none' : '';
+};
+document.getElementById('crono-m-cancel').onclick = () => monthlyPanel.classList.remove('open');
+document.getElementById('crono-m-confirm').onclick = () => {
+  if(!window.HUB_CAN_EDIT) return;
+  const member = document.getElementById('crono-m-member').value;
+  const title = document.getElementById('crono-m-title').value.trim();
+  if(!title) return;
+  const tipo = document.getElementById('crono-m-tipo').value;
+  let recurrence;
+  if(tipo === 'diaFixo'){
+    const dia = Math.min(31, Math.max(1, parseInt(document.getElementById('crono-m-dia').value, 10) || 1));
+    recurrence = {type:'diaFixo', dia};
+  } else {
+    recurrence = {type:'diaSemana', posicao: document.getElementById('crono-m-posicao').value, dow: document.getElementById('crono-m-dow').value};
+  }
+  crono_state.monthlyCustom.push({id:crono_uid(), member, title, recurrence, doneMonthKey:null});
+  document.getElementById('crono-m-title').value = '';
+  monthlyPanel.classList.remove('open');
+  crono_saveState(crono_state);
+  crono_renderMonthlyCustom();
 };
 
 function crono_fmtKey(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -4424,6 +4604,69 @@ function crono_renderMonthly(){
     if(!window.HUB_CAN_EDIT) return;
     crono_state.monthly.limpezaDone[limpezaKey2] = !limpezaDone2;
     crono_saveState(crono_state); crono_renderMonthly();
+  };
+}
+
+function crono_renderMonthlyCustom(){
+  const el = document.getElementById('crono-monthly-custom-card');
+  const monthKey = crono_currentMonthKey();
+  const today = crono_todayNoTime();
+  const year = today.getFullYear(), month = today.getMonth();
+
+  const rows = crono_state.monthlyCustom.map(item => {
+    const dataAlvo = crono_dataRecorrenciaMensal(item.recurrence, year, month);
+    const done = item.doneMonthKey === monthKey;
+    const late = !done && today > dataAlvo;
+    const memberName = (crono_state.members[item.member] || {}).name || '';
+    return `
+      <div class="monthly-row" data-id="${item.id}">
+        <div class="monthly-info">
+          <span class="monthly-name">${item.title}${memberName ? ' · ' + memberName : ''}</span>
+          <span class="monthly-deadline${late?' late':''}">${crono_descreveRecorrencia(item.recurrence)} · este mês: ${crono_fmtBR(dataAlvo)}</span>
+        </div>
+        <div class="monthly-side">
+          ${late ? '<span class="badge badge-late">Atrasada</span>' : ''}
+          ${done ? '<span class="badge badge-done">Concluída</span>' : ''}
+          <button class="monthly-check${done?' done':''}" data-action="toggle" data-id="${item.id}">${done?'Concluída':'Marcar concluída'}</button>
+          <button class="task-del" data-action="del" data-id="${item.id}" aria-label="Remover tarefa mensal">\u00d7</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  el.innerHTML = `
+    <h3 class="monthly-card-title">Tarefas mensais personalizadas</h3>
+    <div class="monthly-card-sub">Reseta sozinho todo mês</div>
+    ${rows || '<div class="empty-hint">Nenhuma tarefa mensal personalizada ainda.</div>'}
+    <button class="add-monthly-btn" id="crono-btn-monthly">+ Nova tarefa mensal</button>
+  `;
+
+  el.querySelectorAll('[data-action="toggle"]').forEach(btn => {
+    btn.onclick = () => {
+      if(!window.HUB_CAN_EDIT) return;
+      const item = crono_state.monthlyCustom.find(i => i.id === btn.dataset.id);
+      if(!item) return;
+      item.doneMonthKey = item.doneMonthKey === monthKey ? null : monthKey;
+      crono_saveState(crono_state);
+      crono_renderMonthlyCustom();
+    };
+  });
+  el.querySelectorAll('[data-action="del"]').forEach(btn => {
+    btn.onclick = () => {
+      if(!window.HUB_CAN_EDIT) return;
+      crono_state.monthlyCustom = crono_state.monthlyCustom.filter(i => i.id !== btn.dataset.id);
+      crono_saveState(crono_state);
+      crono_renderMonthlyCustom();
+    };
+  });
+  document.getElementById('crono-btn-monthly').onclick = () => {
+    if(!window.HUB_CAN_EDIT) return;
+    const memberSel = document.getElementById('crono-m-member');
+    memberSel.innerHTML = Object.entries(crono_state.members).map(([k,v])=>`<option value="${k}">${v.name}</option>`).join('');
+    document.getElementById('crono-m-tipo').value = 'diaFixo';
+    document.getElementById('crono-m-diafixo-row').style.display = '';
+    document.getElementById('crono-m-diasemana-row').style.display = 'none';
+    monthlyPanel.classList.add('open');
   };
 }
 
