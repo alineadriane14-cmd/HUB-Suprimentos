@@ -2576,7 +2576,13 @@ function gestao_renderFORN(){
 #hub-module-compra .supplier-table td{ padding: 10px 16px; font-size: 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 #hub-module-compra .supplier-table tr:last-child td{ border-bottom: none; }
 #hub-module-compra .supplier-table tr:hover td{ background: var(--surface2); }
-#hub-module-compra .supplier-name{ font-weight: 600; font-size: 13px; color: var(--text); }
+#hub-module-compra .supplier-name{ font-weight: 600; font-size: 13px; color: var(--text); display:inline-flex; align-items:center; gap:6px; }
+#hub-module-compra .forn-tipo-badge{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:16px; height:16px; border-radius:4px; border:1px solid;
+  font-family:'DM Mono',monospace; font-size:9px; font-weight:700; color:#fff;
+  flex:none;
+}
 #hub-module-compra .obra-text{ color: var(--text2); font-size: 12px; }
 #hub-module-compra .price{ font-weight: 700; color: var(--text); }
 #hub-module-compra .unit{ color: var(--green); font-size: 11px; font-weight: 600; }
@@ -2715,6 +2721,7 @@ function gestao_renderFORN(){
 // ─── Storage (Firebase Firestore — lotes, compartilhado entre usuários) ──────
 let compra_allRecords = [];
 let compra_currentSort = 'data_desc';
+let compra_fornTipos = {}; // nome do fornecedor -> 'ARMAZEM'|'FABRICA'|'OUTRO', cruzado com a Gestão de Insumos
 let compra_unsub = null;
 
 function compra_loadStorage() {
@@ -3106,7 +3113,7 @@ function compra_renderResults() {
       const rows = sortedRows.map(r => {
         const priceStr = r.preco ? compra_fmtValor(r.preco) : compra_fmtValor(r.valor);
         return `<tr>
-          <td><div class="supplier-name">${compra_esc(r.fornecedor || '—')}</div></td>
+          <td><div class="supplier-name">${compra_esc(r.fornecedor || '—')}${compra_tipoBadge(r.fornecedor)}</div></td>
           <td class="date-cell">${r.data || '—'}</td>
           <td><span class="price">${priceStr}</span> <span class="unit">${compra_esc(r.unidade || '')}</span></td>
           <td class="obra-text">${compra_esc(r.obra || '—')}</td>
@@ -3205,6 +3212,52 @@ function compra_initModule(){
   compraInitialized = true;
   compra_loadStorage();
   compra_refreshUI();
+  compra_carregarTiposFornecedor();
+}
+
+// Cruza com a Gestão de Insumos: o tipo de cada fornecedor (ARMAZÉM/FÁBRICA/OUTRO)
+// mora no mesmo documento do Firestore usado por aquele módulo (window._fb),
+// então lemos direto de lá — não depende do usuário ter aberto a Gestão nesta sessão.
+let compra_fornTiposBare = {}; // mesmo mapa, mas com a chave sem o "CÓDIGO - " na frente
+
+async function compra_carregarTiposFornecedor(){
+  if(!window._fb) return;
+  const aplicar = (data) => {
+    compra_fornTipos = (data && data.fornMap) || {};
+    // A Gestão de Insumos guarda a maioria das chaves como "CÓDIGO - NOME" (import
+    // principal), mas o nome do fornecedor na Última Compra vem sempre sem código
+    // (é assim que o Sienge exporta essa planilha). Por isso criamos um índice
+    // auxiliar só com o nome puro, pra casar os dois formatos.
+    compra_fornTiposBare = {};
+    for (const chave in compra_fornTipos) {
+      const semCodigo = chave.replace(/^\d+\s*-\s*/, '').trim();
+      if (semCodigo && !(semCodigo in compra_fornTiposBare)) {
+        compra_fornTiposBare[semCodigo] = compra_fornTipos[chave];
+      }
+    }
+    compra_renderResults();
+  };
+  try {
+    const data = await window._fb.load();
+    aplicar(data);
+  } catch(e) { console.error('Erro ao carregar tipos de fornecedor:', e); }
+  try {
+    window._fb.listen(aplicar);
+  } catch(e) {}
+}
+
+// Cores idênticas às usadas nos botões ARMAZÉM/FÁBRICA/OUTRO da Gestão de Insumos
+const COMPRA_TIPO_STYLE = {
+  ARMAZEM: { letra:'A', bg:'rgba(122,25,48,.3)',   bd:'rgba(122,25,48,.6)' },
+  FABRICA: { letra:'F', bg:'rgba(255,255,255,.1)', bd:'rgba(255,255,255,.3)' },
+  OUTRO:   { letra:'O', bg:'rgba(255,255,255,.32)', bd:'rgba(255,255,255,.55)' }
+};
+function compra_tipoBadge(fornecedor){
+  if(!fornecedor) return '';
+  const tipo = compra_fornTipos[fornecedor] || compra_fornTiposBare[fornecedor];
+  const s = COMPRA_TIPO_STYLE[tipo];
+  if(!s) return '';
+  return `<span class="forn-tipo-badge" style="background:${s.bg};border-color:${s.bd};" title="${tipo}">${s.letra}</span>`;
 }
 
 // Escuta a navegação do HUB: só inicializa quando o usuário entra no módulo Última Compra
@@ -3866,6 +3919,21 @@ window.addEventListener('hub-ready', () => {
 #hub-module-cronograma .monthly-side{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 #hub-module-cronograma .monthly-check{font-size:12px;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--paper);color:var(--ink);cursor:pointer;}
 #hub-module-cronograma .monthly-check.done{background:var(--done);color:var(--paper);border-color:var(--done);}
+#hub-module-cronograma .task-recurring-badge{font-size:10px;color:var(--ink-faint);font-family:var(--font-mono);}
+#hub-module-cronograma .task-finalize{font-size:11px;padding:3px 8px;border-radius:6px;border:1px solid var(--accent);color:var(--accent-ink);background:transparent;cursor:pointer;white-space:nowrap;}
+#hub-module-cronograma .task-finalize:hover{background:var(--accent-bg);}
+#hub-module-cronograma .repeat-control{position:relative;margin-top:10px;}
+#hub-module-cronograma .repeat-btn{display:flex;align-items:center;gap:6px;font-family:var(--font-body);font-size:13px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--radius);background:var(--paper);color:var(--ink);cursor:pointer;width:100%;text-align:left;}
+#hub-module-cronograma .repeat-btn:hover{border-color:var(--ink-soft);}
+#hub-module-cronograma .repeat-menu{display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 8px 24px rgba(0,0,0,.4);z-index:20;overflow:hidden;}
+#hub-module-cronograma .repeat-menu.open{display:block;}
+#hub-module-cronograma .repeat-menu button{display:block;width:100%;text-align:left;padding:10px 14px;font-family:var(--font-body);font-size:13px;color:var(--ink);background:transparent;border:none;border-bottom:1px solid var(--line-soft);cursor:pointer;}
+#hub-module-cronograma .repeat-menu button:last-child{border-bottom:none;}
+#hub-module-cronograma .repeat-menu button:hover{background:var(--accent-bg);color:var(--accent-ink);}
+#hub-module-cronograma .repeat-custom{margin-top:10px;padding:12px;background:var(--bg);border:1px solid var(--line-soft);border-radius:var(--radius);}
+#hub-module-cronograma .repeat-custom-tabs{display:flex;gap:6px;margin-bottom:10px;}
+#hub-module-cronograma .repeat-custom-tabs button{font-family:var(--font-body);font-size:12px;padding:6px 10px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--ink-soft);cursor:pointer;}
+#hub-module-cronograma .repeat-custom-tabs button.active{background:var(--accent-bg);border-color:var(--accent);color:var(--accent-ink);}
 #hub-module-cronograma .weekday-check-group{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;}
 #hub-module-cronograma .weekday-check-group label{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-soft);cursor:pointer;font-family:var(--font-mono);}
 #hub-module-cronograma .monthly-row .task-del{border:none;background:transparent;color:var(--ink-faint);cursor:pointer;font-size:16px;line-height:1;padding:2px 4px;}
@@ -3878,10 +3946,11 @@ window.addEventListener('hub-ready', () => {
 #hub-module-cronograma.crono-readonly .crono-readonly-banner{display:block;}
 #hub-module-cronograma.crono-readonly .task-check,
 #hub-module-cronograma.crono-readonly .task-del,
+#hub-module-cronograma.crono-readonly .task-finalize,
 #hub-module-cronograma.crono-readonly .add-task-btn,
 #hub-module-cronograma.crono-readonly .add-monthly-btn,
 #hub-module-cronograma.crono-readonly #crono-btn-urgent,
-#hub-module-cronograma.crono-readonly #crono-btn-weekly,
+#hub-module-cronograma.crono-readonly #crono-btn-nova,
 #hub-module-cronograma.crono-readonly #crono-btn-reset,
 #hub-module-cronograma.crono-readonly .monthly-check,
 #hub-module-cronograma.crono-readonly .member-name-input,
@@ -3907,7 +3976,7 @@ window.addEventListener('hub-ready', () => {
     <div class="tabs" id="crono-tabs"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn urgent" id="crono-btn-urgent">+ Demanda urgente da obra</button>
-      <button class="btn" id="crono-btn-weekly">+ Tarefa semanal recorrente</button>
+      <button class="btn" id="crono-btn-nova">+ Nova tarefa</button>
       <button class="btn" id="crono-btn-reset">Reiniciar marcações</button>
     </div>
   </div>
@@ -3926,53 +3995,68 @@ window.addEventListener('hub-ready', () => {
     </div>
   </div>
 
-  <div class="urgent-panel" id="crono-weekly-panel">
-    <h3>Nova tarefa semanal recorrente</h3>
+  <div class="urgent-panel" id="crono-task-panel">
+    <h3>Nova tarefa</h3>
     <div class="urgent-grid">
-      <select id="crono-w-member"></select>
-      <input type="time" id="crono-w-time" value="08:00">
-      <select id="crono-w-cat"></select>
+      <select id="crono-t-day"></select>
+      <select id="crono-t-member"></select>
+      <input type="time" id="crono-t-time" value="08:00">
+      <select id="crono-t-cat"></select>
     </div>
-    <div class="weekday-check-group" id="crono-w-days"></div>
-    <input type="text" id="crono-w-title" placeholder="Descreva a tarefa" style="margin-top:8px;">
-    <div class="add-form-actions">
-      <button id="crono-w-cancel">Cancelar</button>
-      <button class="confirm" id="crono-w-confirm">Adicionar</button>
-    </div>
-  </div>
+    <input type="text" id="crono-t-title" placeholder="Descreva a tarefa" style="margin-top:8px;">
 
-  <div class="urgent-panel" id="crono-monthly-panel">
-    <h3>Nova tarefa mensal recorrente</h3>
-    <div class="urgent-grid">
-      <select id="crono-m-member"></select>
-      <select id="crono-m-tipo">
-        <option value="diaFixo">Todo dia __ do mês</option>
-        <option value="diaSemana">Toda [posição] [dia da semana] do mês</option>
-      </select>
+    <div class="repeat-control">
+      <button type="button" class="repeat-btn" id="crono-t-repeat-btn">
+        <span>↻</span> <span id="crono-t-repeat-label">Repetir: apenas este dia</span>
+      </button>
+      <div class="repeat-menu" id="crono-t-repeat-menu">
+        <button type="button" data-mode="single">Apenas <span id="crono-rm-day1"></span></button>
+        <button type="button" data-mode="daily">Todo dia útil (Seg - Sex)</button>
+        <button type="button" data-mode="monthlyFixed">Todo mês no dia <span id="crono-rm-daynum"></span></button>
+        <button type="button" data-mode="custom">Personalizar…</button>
+      </div>
     </div>
-    <div class="urgent-grid" id="crono-m-diafixo-row">
-      <input type="number" id="crono-m-dia" min="1" max="31" value="10" placeholder="Dia do mês (1-31)">
+
+    <div class="repeat-custom" id="crono-t-custom" style="display:none;">
+      <div class="repeat-custom-tabs">
+        <button type="button" class="active" data-tipo="dias" id="crono-rc-tab-dias">Dias específicos</button>
+        <button type="button" data-tipo="mensal" id="crono-rc-tab-mensal">Regra mensal</button>
+      </div>
+      <div id="crono-rc-dias">
+        <div class="weekday-check-group" id="crono-w-days"></div>
+      </div>
+      <div id="crono-rc-mensal" style="display:none;">
+        <div class="urgent-grid">
+          <select id="crono-m-tipo">
+            <option value="diaFixo">Todo dia __ do mês</option>
+            <option value="diaSemana">Toda [posição] [dia da semana] do mês</option>
+          </select>
+        </div>
+        <div class="urgent-grid" id="crono-m-diafixo-row">
+          <input type="number" id="crono-m-dia" min="1" max="31" value="10" placeholder="Dia do mês (1-31)">
+        </div>
+        <div class="urgent-grid" id="crono-m-diasemana-row" style="display:none;">
+          <select id="crono-m-posicao">
+            <option value="primeira">Primeira</option>
+            <option value="segunda">Segunda</option>
+            <option value="terceira">Terceira</option>
+            <option value="quarta">Quarta</option>
+            <option value="ultima">Última</option>
+          </select>
+          <select id="crono-m-dow">
+            <option value="seg">Segunda-feira</option>
+            <option value="ter">Terça-feira</option>
+            <option value="qua">Quarta-feira</option>
+            <option value="qui">Quinta-feira</option>
+            <option value="sex">Sexta-feira</option>
+          </select>
+        </div>
+      </div>
     </div>
-    <div class="urgent-grid" id="crono-m-diasemana-row" style="display:none;">
-      <select id="crono-m-posicao">
-        <option value="primeira">Primeira</option>
-        <option value="segunda">Segunda</option>
-        <option value="terceira">Terceira</option>
-        <option value="quarta">Quarta</option>
-        <option value="ultima">Última</option>
-      </select>
-      <select id="crono-m-dow">
-        <option value="seg">Segunda-feira</option>
-        <option value="ter">Terça-feira</option>
-        <option value="qua">Quarta-feira</option>
-        <option value="qui">Quinta-feira</option>
-        <option value="sex">Sexta-feira</option>
-      </select>
-    </div>
-    <input type="text" id="crono-m-title" placeholder="Descreva a tarefa" style="margin-top:8px;">
+
     <div class="add-form-actions">
-      <button id="crono-m-cancel">Cancelar</button>
-      <button class="confirm" id="crono-m-confirm">Adicionar</button>
+      <button id="crono-t-cancel">Cancelar</button>
+      <button class="confirm" id="crono-t-confirm">Adicionar</button>
     </div>
   </div>
 
@@ -4269,6 +4353,7 @@ function crono_buildTaskItem(task){
   const check = document.createElement('button');
   check.className = 'task-check' + (done?' checked':'');
   check.setAttribute('aria-label','Marcar como concluída');
+  check.title = task.groupId ? 'Concluída — só para hoje; os outros dias continuam pendentes' : 'Marcar como concluída';
   check.onclick = () => { if(!window.HUB_CAN_EDIT)return; task.doneWeekKey = crono_isTaskDone(task) ? null : crono_currentWeekKey(); crono_saveState(crono_state); crono_render(); };
   li.appendChild(check);
 
@@ -4289,12 +4374,35 @@ function crono_buildTaskItem(task){
   tag.className = 'tag ' + cat.tag;
   tag.textContent = cat.label;
   meta.appendChild(tag);
+  if(task.groupId){
+    const rec = document.createElement('span');
+    rec.className = 'task-recurring-badge';
+    rec.textContent = '↻ recorrente';
+    rec.setAttribute('title', 'Essa tarefa se repete em vários dias');
+    meta.appendChild(rec);
+  }
   body.appendChild(meta);
   li.appendChild(body);
 
+  if(task.groupId){
+    const finalize = document.createElement('button');
+    finalize.className = 'task-finalize';
+    finalize.setAttribute('aria-label','Finalizar tarefa recorrente (remove de todos os dias)');
+    finalize.textContent = 'Finalizada';
+    finalize.title = 'A tarefa acabou de verdade — remove de todos os dias em que ela se repete';
+    finalize.onclick = () => {
+      if(!window.HUB_CAN_EDIT) return;
+      crono_state.tasks = crono_state.tasks.filter(t => t.groupId !== task.groupId);
+      crono_saveState(crono_state);
+      crono_render();
+    };
+    li.appendChild(finalize);
+  }
+
   const del = document.createElement('button');
   del.className = 'task-del';
-  del.setAttribute('aria-label','Remover tarefa');
+  del.setAttribute('aria-label', task.groupId ? 'Remover apenas este dia' : 'Remover tarefa');
+  del.title = task.groupId ? 'Remove só a ocorrência deste dia — os outros dias continuam' : 'Remove esta tarefa';
   del.textContent = '\u00d7';
   del.onclick = () => { if(!window.HUB_CAN_EDIT)return; crono_state.tasks = crono_state.tasks.filter(t=>t.id!==task.id); crono_saveState(crono_state); crono_render(); };
   li.appendChild(del);
@@ -4364,65 +4472,142 @@ document.getElementById('crono-u-confirm').onclick = () => {
   crono_render();
 };
 
-// ─── Tarefa semanal recorrente (adiciona em vários dias de uma vez) ────────
-const weeklyPanel = document.getElementById('crono-weekly-panel');
-document.getElementById('crono-btn-weekly').onclick = () => {
+// ─── Nova tarefa (com controle "Repetir" unificado) ────────────────────────
+const taskPanel = document.getElementById('crono-task-panel');
+const repeatBtn = document.getElementById('crono-t-repeat-btn');
+const repeatMenu = document.getElementById('crono-t-repeat-menu');
+const repeatLabel = document.getElementById('crono-t-repeat-label');
+const customBox = document.getElementById('crono-t-custom');
+let crono_repeatMode = 'single';
+
+const crono_DOW_LABEL_FEM = {seg:'segunda-feira', ter:'terça-feira', qua:'quarta-feira', qui:'quinta-feira', sex:'sexta-feira'};
+
+function crono_repeatLabelFor(mode, day, diaDoMes){
+  if(mode === 'single') return 'Repetir: apenas ' + crono_DOW_LABEL_FEM[day];
+  if(mode === 'daily') return 'Repetir: todo dia útil (Seg - Sex)';
+  if(mode === 'monthlyFixed') return 'Repetir: todo mês no dia ' + diaDoMes;
+  if(mode === 'customDays') return 'Repetir: dias personalizados';
+  if(mode === 'customMonthly') return 'Repetir: regra mensal personalizada';
+  return 'Repetir';
+}
+
+function crono_updateRepeatMenuLabels(){
+  const day = document.getElementById('crono-t-day').value;
+  document.getElementById('crono-rm-day1').textContent = crono_DOW_LABEL_FEM[day];
+  document.getElementById('crono-rm-daynum').textContent = crono_todayNoTime().getDate();
+}
+
+document.getElementById('crono-btn-nova').onclick = () => {
   if(!window.HUB_CAN_EDIT) return;
-  const memberSel = document.getElementById('crono-w-member');
-  const catSel = document.getElementById('crono-w-cat');
+  const daySel = document.getElementById('crono-t-day');
+  const memberSel = document.getElementById('crono-t-member');
+  const catSel = document.getElementById('crono-t-cat');
+  daySel.innerHTML = crono_DAYS.map(d => `<option value="${d.key}">${d.label}</option>`).join('');
+  daySel.value = crono_activeDay;
   memberSel.innerHTML = Object.entries(crono_state.members).map(([k,v])=>`<option value="${k}">${v.name}</option>`).join('');
   catSel.innerHTML = Object.entries(crono_CATS).map(([k,v])=>`<option value="${k}">${v.label}</option>`).join('');
   const daysEl = document.getElementById('crono-w-days');
-  daysEl.innerHTML = crono_DAYS.map(d => `
-    <label><input type="checkbox" value="${d.key}" checked> ${d.label}</label>
-  `).join('');
-  weeklyPanel.classList.add('open');
-};
-document.getElementById('crono-w-cancel').onclick = () => weeklyPanel.classList.remove('open');
-document.getElementById('crono-w-confirm').onclick = () => {
-  if(!window.HUB_CAN_EDIT) return;
-  const member = document.getElementById('crono-w-member').value;
-  const hora = document.getElementById('crono-w-time').value || '08:00';
-  const category = document.getElementById('crono-w-cat').value;
-  const title = document.getElementById('crono-w-title').value.trim();
-  const diasEscolhidos = [...document.querySelectorAll('#crono-w-days input:checked')].map(el => el.value);
-  if(!title || diasEscolhidos.length===0) return;
-  diasEscolhidos.forEach(day => {
-    crono_state.tasks.push({id:crono_uid(), day, member, hora, category, title, doneWeekKey:null});
-  });
-  document.getElementById('crono-w-title').value = '';
-  weeklyPanel.classList.remove('open');
-  crono_saveState(crono_state);
-  crono_render();
+  daysEl.innerHTML = crono_DAYS.map(d => `<label><input type="checkbox" value="${d.key}" ${d.key===crono_activeDay?'checked':''}> ${d.label}</label>`).join('');
+
+  crono_repeatMode = 'single';
+  repeatMenu.classList.remove('open');
+  customBox.style.display = 'none';
+  crono_updateRepeatMenuLabels();
+  repeatLabel.textContent = crono_repeatLabelFor('single', daySel.value);
+  taskPanel.classList.add('open');
 };
 
-// ─── Tarefa mensal recorrente personalizada ────────────────────────────────
-const monthlyPanel = document.getElementById('crono-monthly-panel');
+document.getElementById('crono-t-day').onchange = crono_updateRepeatMenuLabels;
+
+repeatBtn.onclick = () => { crono_updateRepeatMenuLabels(); repeatMenu.classList.toggle('open'); };
+
+repeatMenu.querySelectorAll('button[data-mode]').forEach(btn => {
+  btn.onclick = () => {
+    const mode = btn.dataset.mode;
+    const day = document.getElementById('crono-t-day').value;
+    if(mode === 'custom'){
+      crono_repeatMode = 'customDays'; // padrão ao abrir personalizar
+      customBox.style.display = '';
+      document.getElementById('crono-rc-tab-dias').click();
+      repeatLabel.textContent = crono_repeatLabelFor('customDays');
+    } else {
+      crono_repeatMode = mode;
+      customBox.style.display = 'none';
+      repeatLabel.textContent = crono_repeatLabelFor(mode, day, crono_todayNoTime().getDate());
+    }
+    repeatMenu.classList.remove('open');
+  };
+});
+
+// Fecha o menu "Repetir" ao clicar fora
+document.addEventListener('click', (e) => {
+  if(!repeatBtn.contains(e.target) && !repeatMenu.contains(e.target)) repeatMenu.classList.remove('open');
+});
+
+// Sub-abas de "Personalizar": Dias específicos vs Regra mensal
+document.getElementById('crono-rc-tab-dias').onclick = () => {
+  crono_repeatMode = 'customDays';
+  document.getElementById('crono-rc-tab-dias').classList.add('active');
+  document.getElementById('crono-rc-tab-mensal').classList.remove('active');
+  document.getElementById('crono-rc-dias').style.display = '';
+  document.getElementById('crono-rc-mensal').style.display = 'none';
+  repeatLabel.textContent = crono_repeatLabelFor('customDays');
+};
+document.getElementById('crono-rc-tab-mensal').onclick = () => {
+  crono_repeatMode = 'customMonthly';
+  document.getElementById('crono-rc-tab-mensal').classList.add('active');
+  document.getElementById('crono-rc-tab-dias').classList.remove('active');
+  document.getElementById('crono-rc-dias').style.display = 'none';
+  document.getElementById('crono-rc-mensal').style.display = '';
+  repeatLabel.textContent = crono_repeatLabelFor('customMonthly');
+};
 document.getElementById('crono-m-tipo').onchange = (e) => {
   const isDiaFixo = e.target.value === 'diaFixo';
   document.getElementById('crono-m-diafixo-row').style.display = isDiaFixo ? '' : 'none';
   document.getElementById('crono-m-diasemana-row').style.display = isDiaFixo ? 'none' : '';
 };
-document.getElementById('crono-m-cancel').onclick = () => monthlyPanel.classList.remove('open');
-document.getElementById('crono-m-confirm').onclick = () => {
+
+document.getElementById('crono-t-cancel').onclick = () => taskPanel.classList.remove('open');
+document.getElementById('crono-t-confirm').onclick = () => {
   if(!window.HUB_CAN_EDIT) return;
-  const member = document.getElementById('crono-m-member').value;
-  const title = document.getElementById('crono-m-title').value.trim();
+  const title = document.getElementById('crono-t-title').value.trim();
   if(!title) return;
-  const tipo = document.getElementById('crono-m-tipo').value;
-  let recurrence;
-  if(tipo === 'diaFixo'){
-    const dia = Math.min(31, Math.max(1, parseInt(document.getElementById('crono-m-dia').value, 10) || 1));
-    recurrence = {type:'diaFixo', dia};
-  } else {
-    recurrence = {type:'diaSemana', posicao: document.getElementById('crono-m-posicao').value, dow: document.getElementById('crono-m-dow').value};
+  const member = document.getElementById('crono-t-member').value;
+  const hora = document.getElementById('crono-t-time').value || '08:00';
+  const category = document.getElementById('crono-t-cat').value;
+  const day = document.getElementById('crono-t-day').value;
+
+  if(crono_repeatMode === 'single'){
+    crono_state.tasks.push({id:crono_uid(), day, member, hora, category, title, doneWeekKey:null});
+  } else if(crono_repeatMode === 'daily'){
+    const groupId = crono_uid();
+    crono_DAYS.forEach(d => crono_state.tasks.push({id:crono_uid(), day:d.key, member, hora, category, title, doneWeekKey:null, groupId}));
+  } else if(crono_repeatMode === 'customDays'){
+    const diasEscolhidos = [...document.querySelectorAll('#crono-w-days input:checked')].map(el => el.value);
+    if(diasEscolhidos.length === 0) return;
+    const groupId = diasEscolhidos.length > 1 ? crono_uid() : null;
+    diasEscolhidos.forEach(d => crono_state.tasks.push({id:crono_uid(), day:d, member, hora, category, title, doneWeekKey:null, groupId}));
+  } else if(crono_repeatMode === 'monthlyFixed'){
+    const dia = crono_todayNoTime().getDate();
+    crono_state.monthlyCustom.push({id:crono_uid(), member, title, recurrence:{type:'diaFixo', dia}, doneMonthKey:null});
+  } else if(crono_repeatMode === 'customMonthly'){
+    const tipo = document.getElementById('crono-m-tipo').value;
+    let recurrence;
+    if(tipo === 'diaFixo'){
+      const dia = Math.min(31, Math.max(1, parseInt(document.getElementById('crono-m-dia').value, 10) || 1));
+      recurrence = {type:'diaFixo', dia};
+    } else {
+      recurrence = {type:'diaSemana', posicao: document.getElementById('crono-m-posicao').value, dow: document.getElementById('crono-m-dow').value};
+    }
+    crono_state.monthlyCustom.push({id:crono_uid(), member, title, recurrence, doneMonthKey:null});
   }
-  crono_state.monthlyCustom.push({id:crono_uid(), member, title, recurrence, doneMonthKey:null});
-  document.getElementById('crono-m-title').value = '';
-  monthlyPanel.classList.remove('open');
+
+  document.getElementById('crono-t-title').value = '';
+  taskPanel.classList.remove('open');
   crono_saveState(crono_state);
-  crono_renderMonthlyCustom();
+  crono_render();
 };
+
 
 function crono_fmtKey(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function crono_addDays(date,n){ const d=new Date(date); d.setDate(d.getDate()+n); return d; }
@@ -4661,12 +4846,12 @@ function crono_renderMonthlyCustom(){
   });
   document.getElementById('crono-btn-monthly').onclick = () => {
     if(!window.HUB_CAN_EDIT) return;
-    const memberSel = document.getElementById('crono-m-member');
-    memberSel.innerHTML = Object.entries(crono_state.members).map(([k,v])=>`<option value="${k}">${v.name}</option>`).join('');
+    document.getElementById('crono-btn-nova').click();
+    customBox.style.display = '';
+    document.getElementById('crono-rc-tab-mensal').click();
     document.getElementById('crono-m-tipo').value = 'diaFixo';
     document.getElementById('crono-m-diafixo-row').style.display = '';
     document.getElementById('crono-m-diasemana-row').style.display = 'none';
-    monthlyPanel.classList.add('open');
   };
 }
 
