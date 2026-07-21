@@ -844,6 +844,7 @@ html, body {
 #hub-module-gestao .g-tipo-btn.active.FABRICA{background:rgba(255,255,255,.2);}
 #hub-module-gestao .g-tipo-btn.active.LOJA{background:rgba(255,255,255,.32);}
 #hub-module-gestao .g-tipo-btn.active.OUTRO{background:rgba(255,255,255,.44);}
+#hub-module-gestao .g-forn-tipo-badge{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:4px;border:1px solid;font-family:'DM Mono',monospace;font-size:9px;font-weight:700;color:#fff;flex:none;}
 
 /* pills */
 #hub-module-gestao .g-pill{display:inline-block;font-size:.59rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:999px;white-space:nowrap;}
@@ -1152,6 +1153,7 @@ html, body {
   <button class="g-tab-btn" onclick="gestao_showTab('programacao',this)">🗓 Programação</button>
   <button class="g-tab-btn" onclick="gestao_showTab('cotacoes',this)">📊 Cotações <span id="gestao-cot-badge" style="font-size:.55rem;background:rgba(255,255,255,.22);color:var(--accent3);border-radius:4px;padding:1px 5px;margin-left:4px;display:none"></span></button>
   <button class="g-tab-btn" onclick="gestao_showTab('fornecedores',this)">🏭 Fornecedores <span id="gestao-forn-badge" style="font-size:.55rem;background:rgba(248,113,113,.32);color:var(--accent4);border-radius:4px;padding:1px 5px;margin-left:4px;display:none">Classificar</span></button>
+  <button class="g-tab-btn" onclick="gestao_showTab('resumo',this)">📈 Resumo</button>
 </nav>
 
 <main id="gestao-main">
@@ -1289,6 +1291,12 @@ html, body {
     <div id="gestao-forn-progress" class="g-progress-wrap" style="display:none"></div>
     <div id="gestao-forn-content"></div>
   </div>
+
+  <!-- RESUMO -->
+  <div class="g-section" id="gestao-sec-resumo">
+    <div class="g-prog-banner">📈 Panorama geral do módulo — atualizado automaticamente a cada importação.</div>
+    <div id="gestao-resumo-content"></div>
+  </div>
 </main>
 
 <script>
@@ -1408,6 +1416,7 @@ function gestao_applyRemoteData(data){
   gestao_rebuildProgFilters();gestao_filterPROG();gestao_updateProgStats(); gestao_renderBuyerPanel();
   gestao_filterFORN(); gestao_updateFornStats(); gestao_updateFornBadge();
   gestao_buildCotacoes();
+  if(typeof gestao_renderResumo==='function') gestao_renderResumo();
 }
 
 async function gestao_saveToFirebase(){
@@ -1503,7 +1512,11 @@ function gestao_parseSOL(wb,log){
   if(hRow<0){log.textContent+='   ⚠️  Cabeçalho não encontrado.\n';return;}
   const parsed=[];
   for(let i=hRow+1;i<rows.length;i++){
-    const r=rows[i];const ins=String(r[0]||'').trim();if(!ins)continue;
+    const r=rows[i];const ins=String(r[0]||'').trim();const obraStr=String(r[3]||'').trim();
+    // Ignora linhas que não são solicitações reais: rodapé "Total", carimbo de data/hora
+    // de geração do relatório, cabeçalhos repetidos em quebras de página, linhas em branco, etc.
+    // Uma solicitação real sempre tem Obra preenchida — usamos isso como validação.
+    if(!ins || !obraStr) continue;
     const cm=ins.match(/^(\d+)\s*-/);const ic=cm?cm[1]:'';
     const qn=parseFloat(r[10]);
     let dtPrev=null,dtPrevStr='—';
@@ -1587,6 +1600,68 @@ function gestao_parseHist(wb,log){
   gestao_filterFORN();gestao_updateFornStats();gestao_updateFornBadge();
 }
 
+// ─── CONSTRÓI A PROGRAMAÇÃO DE COMPRAS A PARTIR DAS SOLICITAÇÕES ──
+// Junta gestaoDB.solicitacoes (insumos pendentes) com gestaoDB.bdados
+// (para obter a família de cada insumo) e reaplica edições manuais
+// já salvas (gestaoProgEdits), preservando status/responsável setados
+// pelo usuário entre importações.
+function gestao_buildProg(log){
+  // Mapa código do insumo -> dados da base (família, unidade, etc.)
+  const bdMap = {};
+  gestaoDB.bdados.forEach(b=>{ if(b.codigo) bdMap[b.codigo] = b; });
+
+  const novaProg = gestaoDB.solicitacoes
+    .filter(s => (parseFloat(s.qt_pend)||0) > 0)
+    .map(s => {
+      const bd = bdMap[s.insumoCode] || {};
+      const familia = bd.familia || '—';
+      const _key = `${s.solicitacao||''}_${s.insumoCode||''}_${s.obra||''}`;
+
+      // Descobre o fornecedor primário sugerido (Top5) para estimar o tipo (ARMAZEM/FABRICA)
+      const code = (s.insumo.match(/^(\d+)/)||[])[1] || '';
+      const detail = (s.insumo.match(/^\d+\s*-\s*[^/]+\/\s*(.+)/)||[])[1];
+      const key = detail ? (code+'|'+detail.trim()) : code;
+      const top5 = GESTAO_TOP5_FORN_MAP[key] || GESTAO_TOP5_FORN_MAP[code] || GESTAO_FAMILIA_TOP5[familia] || [];
+      const primaryForn = top5[0] || '';
+      const tipo_forn = gestaoFornMap[primaryForn] || '';
+
+      const row = {
+        _key,
+        insumo: s.insumo,
+        insumoCode: s.insumoCode,
+        obra: s.obra,
+        familia,
+        data_necessidade: s.dtPrevStr || '—',
+        dias: null,
+        qt_pend: s.qt_pend,
+        und: s.un,
+        responsavel: gestaoFamilyMap[familia] || '—',
+        status: 'AGUARDANDO',
+        cotacao: '',
+        num_cotacao: '—',
+        tipo_forn,
+        solicitacao: s.solicitacao
+      };
+
+      // Reaplica edições manuais salvas anteriormente para este item
+      const saved = gestaoProgEdits[_key];
+      if(saved) Object.assign(row, saved);
+
+      return row;
+    });
+
+  gestaoDB.programacao = novaProg;
+  gestaoState.prog.data = [...novaProg];
+
+  if(log) log.textContent += `📅 Programação — ${novaProg.length} itens montados a partir das solicitações.\n`;
+
+  gestao_rebuildProgFilters();
+  gestao_filterPROG();
+  gestao_updateProgStats();
+  gestao_renderBuyerPanel();
+  if(typeof gestao_renderResumo==='function') gestao_renderResumo();
+}
+
 // ═══════════════════════════════════════════════════════════════
 // EXECUÇÃO DA IMPORTAÇÃO (orquestra os parsers acima)
 // ═══════════════════════════════════════════════════════════════
@@ -1611,6 +1686,18 @@ function gestao_runImport(){
 <script>
 function gestao_fmtDate(v){if(!v)return'—';if(v instanceof Date&&!isNaN(v))return v.toLocaleDateString('pt-BR');return String(v).trim().slice(0,10);}
 function gestao_pill(cls,txt){return`<span class="g-pill ${cls}">${txt||'—'}</span>`;}
+// Badge A/F/O — mesma paleta usada nos botões ARMAZÉM/FÁBRICA/OUTRO e no módulo Última Compra
+const GESTAO_TIPO_BADGE_STYLE = {
+  ARMAZEM: { letra:'A', bg:'rgba(122,25,48,.3)',   bd:'rgba(122,25,48,.6)' },
+  FABRICA: { letra:'F', bg:'rgba(255,255,255,.1)', bd:'rgba(255,255,255,.3)' },
+  OUTRO:   { letra:'O', bg:'rgba(255,255,255,.32)', bd:'rgba(255,255,255,.55)' }
+};
+function gestao_fornTipoBadge(fornecedor){
+  const tipo = gestaoFornMap[fornecedor];
+  const s = GESTAO_TIPO_BADGE_STYLE[tipo];
+  if(!s) return '';
+  return `<span class="g-forn-tipo-badge" style="background:${s.bg};border-color:${s.bd};" title="${tipo}">${s.letra}</span>`;
+}
 function gestao_statusPill(s){const l=(s||'').toLowerCase();if(l.includes('emitido'))return gestao_pill('pill-green','Pedido Emitido');if(l.includes('recebid'))return gestao_pill('pill-blue','Cot. Recebida');if(l.includes('enviad'))return gestao_pill('pill-yellow','Cot. Enviada');if(l.includes('cancelar'))return gestao_pill('pill-red','Cancelar');if(l.includes('puxar'))return gestao_pill('pill-gray','Puxar Nota');return gestao_pill('pill-gray',s||'Aguardando');}
 function gestao_diasCell(d){if(d==='—'||d===null||d===undefined)return'<span style="opacity:.4">—</span>';const n=parseInt(d);if(isNaN(n))return'<span style="opacity:.4">—</span>';if(n<0)return`<span style="color:var(--accent4);font-weight:700">${n}d</span>`;if(n<=3)return`<span style="color:var(--accent);font-weight:700">${n}d</span>`;return`<span style="color:var(--accent2)">${n}d</span>`;}
 function gestao_respBadge(r){if(!r||r==='—')return'<span style="opacity:.4">—</span>';const c=r==='ALINE'?'color:var(--accent3)':'color:var(--accent)';return`<span style="font-weight:700;${c}">${r}</span>`;}
@@ -1628,13 +1715,15 @@ function gestao_showTab(t,btn){
   document.querySelectorAll('[id^=gestao-stats-]').forEach(s=>s.style.display='none');
   btn.classList.add('active');
   document.getElementById('gestao-sec-'+t).classList.add('active');
-  document.getElementById({bdados:'gestao-stats-bdados',solicitacoes:'gestao-stats-sol',programacao:'gestao-stats-prog',cotacoes:'gestao-stats-cot',fornecedores:'gestao-stats-forn'}[t]).style.display='grid';
+  const statsId={bdados:'gestao-stats-bdados',solicitacoes:'gestao-stats-sol',programacao:'gestao-stats-prog',cotacoes:'gestao-stats-cot',fornecedores:'gestao-stats-forn'}[t];
+  if(statsId) document.getElementById(statsId).style.display='grid';
   // Lazy filter calls — functions may be in later script blocks
   if(t==='cotacoes'   && typeof gestao_filterCOT  ==='function') gestao_filterCOT();
   if(t==='fornecedores'&& typeof gestao_filterFORN ==='function') gestao_filterFORN();
   if(t==='programacao' && typeof gestao_filterPROG ==='function') gestao_filterPROG();
   if(t==='solicitacoes'&& typeof gestao_filterSOL  ==='function') gestao_filterSOL();
   if(t==='bdados'      && typeof gestao_filterBD   ==='function') gestao_filterBD();
+  if(t==='resumo'      && typeof gestao_renderResumo==='function') gestao_renderResumo();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1776,6 +1865,88 @@ function gestao_updateProgStats(){
   document.getElementById('gestao-sp6').textContent=total?Math.round(fabrica/total*100)+'%':'—';
 }
 function gestao_rebuildProgFilters(){gestao_populateSelect('prog-obra',[...new Set(gestaoDB.programacao.map(r=>r.obra).filter(Boolean))].sort(),'Todas as Obras');gestao_populateSelect('prog-familia',[...new Set(gestaoDB.programacao.map(r=>r.familia).filter(f=>f&&f!=='—'))].sort(),'Todas as Famílias');}
+
+// ═══════════════════════════════════════════════════════════════
+// RESUMO — painel geral do módulo
+// ═══════════════════════════════════════════════════════════════
+const GESTAO_BUYER_LABEL = {ALINE:'Aline', MARCOS:'Marcos'};
+function gestao_renderResumo(){
+  const el = document.getElementById('gestao-resumo-content');
+  if(!el) return;
+
+  const sol  = gestaoDB.solicitacoes || [];
+  const prog = gestaoDB.programacao  || [];
+
+  // Data de atualização = última vez que uma nova relação de solicitações foi importada
+  let lastUpdateTxt = '—';
+  if(gestaoDB.solImportDate){
+    const d = new Date(gestaoDB.solImportDate);
+    if(!isNaN(d)){
+      lastUpdateTxt = d.toLocaleDateString('pt-BR') + ' às ' + d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    }
+  }
+
+  // Quantidade de insumos solicitados
+  const totalSolicitados = sol.length;
+  const totalQtdPendente = sol.reduce((s,r)=>s+(parseFloat(r.qt_pend)||0),0);
+
+  // % Fábrica / Armazém sugeridos — considera os itens ainda ativos na programação
+  // (mesma regra usada nas estatísticas da aba Programação)
+  const ativos = prog.filter(r=>r.status!=='CANCELAR INSUMO'&&r.status!=='PEDIDO EMITIDO');
+  const totalAtivos = ativos.length;
+  const armazemN = ativos.filter(r=>r.tipo_forn==='ARMAZEM').length;
+  const fabricaN = ativos.filter(r=>r.tipo_forn==='FABRICA').length;
+  const semSugestaoN = totalAtivos - armazemN - fabricaN;
+  const pct = (n)=> totalAtivos ? Math.round(n/totalAtivos*100) : 0;
+
+  // Quantidade de insumos distribuída por comprador
+  const porComprador = {};
+  prog.forEach(r=>{
+    const key = r.responsavel || '—';
+    porComprador[key] = (porComprador[key]||0) + 1;
+  });
+  const compradores = Object.entries(porComprador).sort((a,b)=>b[1]-a[1]);
+  const totalProg = prog.length;
+
+  el.innerHTML = `
+    <div class="g-stats" style="margin-bottom:1.5rem">
+      <div class="g-stat-card y"><div class="g-stat-label">Última Atualização</div><div class="g-stat-value" style="font-size:1.05rem">${lastUpdateTxt}</div></div>
+      <div class="g-stat-card b"><div class="g-stat-label">Insumos Solicitados</div><div class="g-stat-value">${totalSolicitados}</div></div>
+      <div class="g-stat-card g"><div class="g-stat-label">% Armazém Sugerido</div><div class="g-stat-value">${totalAtivos?pct(armazemN)+'%':'—'}</div></div>
+      <div class="g-stat-card r"><div class="g-stat-label">% Fábrica Sugerido</div><div class="g-stat-value">${totalAtivos?pct(fabricaN)+'%':'—'}</div></div>
+    </div>
+
+    <div style="background:var(--g-surface);border:1px solid var(--g-border);border-radius:10px;padding:1.25rem 1.5rem;margin-bottom:1.5rem">
+      <div style="font-family:'Syne',sans-serif;font-weight:700;font-size:.9rem;margin-bottom:1rem;color:var(--g-text)">🏭 Tipo de Fornecedor Sugerido</div>
+      ${totalAtivos?`
+        <div class="g-progress-wrap" style="margin-bottom:.9rem">
+          <div class="g-progress-label"><span>Armazém</span><span>${armazemN} itens (${pct(armazemN)}%)</span></div>
+          <div class="g-progress-bar"><div class="g-progress-fill" style="width:${pct(armazemN)}%;background:linear-gradient(90deg,var(--g-accent2),var(--g-accent3))"></div></div>
+        </div>
+        <div class="g-progress-wrap" style="margin-bottom:.9rem">
+          <div class="g-progress-label"><span>Fábrica</span><span>${fabricaN} itens (${pct(fabricaN)}%)</span></div>
+          <div class="g-progress-bar"><div class="g-progress-fill" style="width:${pct(fabricaN)}%;background:linear-gradient(90deg,#7a1930,#f87171)"></div></div>
+        </div>
+        <div class="g-progress-wrap">
+          <div class="g-progress-label"><span>Sem sugestão / a classificar</span><span>${semSugestaoN} itens (${pct(semSugestaoN)}%)</span></div>
+          <div class="g-progress-bar"><div class="g-progress-fill" style="width:${pct(semSugestaoN)}%;background:var(--g-muted)"></div></div>
+        </div>
+      `:`<div class="g-empty-state">Sem itens na Programação ainda.</div>`}
+    </div>
+
+    <div style="background:var(--g-surface);border:1px solid var(--g-border);border-radius:10px;padding:1.25rem 1.5rem">
+      <div style="font-family:'Syne',sans-serif;font-weight:700;font-size:.9rem;margin-bottom:1rem;color:var(--g-text)">👤 Insumos Distribuídos por Comprador</div>
+      ${compradores.length?compradores.map(([nome,qtd])=>{
+        const label = GESTAO_BUYER_LABEL[nome] || nome;
+        const p = totalProg ? Math.round(qtd/totalProg*100) : 0;
+        return `<div class="g-progress-wrap" style="margin-bottom:.9rem">
+          <div class="g-progress-label"><span>${label}</span><span>${qtd} itens (${p}%)</span></div>
+          <div class="g-progress-bar"><div class="g-progress-fill" style="width:${p}%"></div></div>
+        </div>`;
+      }).join(''):`<div class="g-empty-state">Sem itens na Programação ainda.</div>`}
+    </div>
+  `;
+}
 function gestao_calcDias(r){
   // Recalculate dias relative to GESTAO_TODAY using data_necessidade string
   if(!r.data_necessidade || r.data_necessidade === '—') return null;
@@ -2089,7 +2260,7 @@ function gestao_renderCOT_insumo(filtered_insumos){
     const fornHtml = item.fornecedores.length
       ? (item.isFallback ? '<span style="font-size:.6rem;color:var(--accent3);margin-right:4px">📂 por família:</span>' : '')
         + item.fornecedores.map(f =>
-          '<span style="display:inline-block;'+tagColor+';border-radius:4px;padding:2px 7px;font-size:.62rem;margin:2px 2px 2px 0;border:1px solid">'+f+'</span>'
+          '<span style="display:inline-flex;align-items:center;gap:4px;'+tagColor+';border-radius:4px;padding:2px 7px;font-size:.62rem;margin:2px 2px 2px 0;border:1px solid">'+gestao_fornTipoBadge(f)+f+'</span>'
         ).join('')
       : '<span style="opacity:.4;font-size:.7rem">Sem sugestão</span>';
     html += '<tr>'
@@ -2143,7 +2314,7 @@ function gestao_renderCOT_agrupamento(groups){
     const fornHtml = g.forns.length
       ? (g.isFallback ? '<span style="font-size:.6rem;color:var(--accent3);margin-right:4px">📂 por família:</span>' : '')
         + g.forns.map(f =>
-          '<span style="display:inline-block;'+tagStyle+';border-radius:4px;padding:2px 8px;font-size:.63rem;margin:2px 3px 2px 0">'+f+'</span>'
+          '<span style="display:inline-flex;align-items:center;gap:4px;'+tagStyle+';border-radius:4px;padding:2px 8px;font-size:.63rem;margin:2px 3px 2px 0">'+gestao_fornTipoBadge(f)+f+'</span>'
         ).join('')
       : '<span style="opacity:.4;font-size:.7rem">Sem sugestão de fornecedor</span>';
 
@@ -2277,7 +2448,7 @@ function gestao_renderCOT(){
       + '<div style="padding:.9rem 1.2rem;background:var(--surface2);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem">'
       + '<div style="display:flex;align-items:center;gap:1rem">'
       + '<span style="font-family:monospace;font-size:.85rem;font-weight:700;color:'+compColor+'">'+cot.id+'</span>'
-      + '<span style="font-size:.78rem;font-weight:600">'+cot.fornecedor+'</span>'
+      + '<span style="font-size:.78rem;font-weight:600;display:inline-flex;align-items:center;gap:6px">'+gestao_fornTipoBadge(cot.fornecedor)+cot.fornecedor+'</span>'
       + '</div>'
       + '<div style="display:flex;align-items:center;gap:.75rem">'
       + '<span style="font-size:.68rem;color:var(--muted)">'+cot.insumos.length+' insumo'+(cot.insumos.length!==1?'s':'')+'</span>'
