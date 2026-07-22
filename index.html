@@ -1713,7 +1713,9 @@ function gestao_respBadge(r){if(!r||r==='—')return'<span style="opacity:.4">�
 function gestao_mkPages(total,perPage,page,fn){const pages=Math.ceil(total/perPage)||1;let h=`<button class="g-page-btn" onclick="${fn}(${page-1})" ${page<=1?'disabled':''}>‹</button>`;const s=Math.max(1,page-2),e=Math.min(pages,page+2);for(let i=s;i<=e;i++)h+=`<button class="g-page-btn ${i===page?'active':''}" onclick="${fn}(${i})">${i}</button>`;return h+`<button class="g-page-btn" onclick="${fn}(${page+1})" ${page>=pages?'disabled':''}>›</button>`;}
 function gestao_emptyImport(label,msg){return`<div class="g-empty-import"><div class="g-ei-icon">📂</div><p>Nenhum dado para <strong>${label}</strong>.<br>${msg||'Importe o arquivo .xlsx.'}</p>${window.HUB_CAN_EDIT?`<button onclick="gestao_openModal()">📥 Importar Excel</button>`:''}</div>`;}
 function gestao_populateSelect(id,values,def){const sel=document.getElementById(id);if(!sel)return;const cur=sel.value;sel.innerHTML=`<option value="">${def}</option>`;values.forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;sel.appendChild(o);});if(cur)sel.value=cur;}
-function gestao_esc(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");}
+function gestao_esc(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');}
+// Escape para texto colocado dentro de atributos HTML comuns (title="...", etc — não é string JS)
+function gestao_escAttr(s){return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
 // ═══════════════════════════════════════════════════════════════
 // TAB
@@ -1843,9 +1845,13 @@ function gestao_onProgEdit(key,field,value){
   if(field==='status'){
     gestao_buildCotacoes();
     gestao_updateProgStats();
-    clearTimeout(_saveTimer);
-    _saveTimer = null;
-    gestao_saveToFirebase(); // salva imediatamente — evita race condition com Firebase
+    // Cancela qualquer salvamento agendado (debounce) e salva JÁ.
+    // Enquanto o salvamento estiver em andamento, mantemos gestao_saveTimer "verdadeiro"
+    // para que, se um snapshot do Firebase chegar nesse meio tempo, gestao_applyRemoteData
+    // saiba que há uma edição local ainda não confirmada e não a sobrescreva (revertendo o status).
+    clearTimeout(gestao_saveTimer);
+    gestao_saveTimer = true;
+    gestao_saveToFirebase().finally(()=>{ gestao_saveTimer = null; }); // salva imediatamente — evita race condition com Firebase
   } else {
     gestao_scheduleSave();
   }
@@ -2033,7 +2039,7 @@ function gestao_renderPROG(){
     const sSel=statusOpts.map(o=>`<option value="${o}"${r.status===o?' selected':''}>${o}</option>`).join('');
     return`<tr style="${rowStyle}">
       <td style="color:var(--accent3);font-weight:700">${r.num_cotacao||'—'}</td>
-      <td title="${r.insumo}" style="max-width:320px;white-space:normal;line-height:1.4">${r.insumo}<span style="font-size:.65rem;color:var(--accent3);margin-left:6px;font-weight:700">#${r.solicitacao||''}</span>${obs?'<span style="font-size:.6rem;color:var(--muted);margin-left:6px">vencida</span>':''}</td>
+      <td title="${gestao_escAttr(r.insumo)}" style="max-width:320px;white-space:normal;line-height:1.4">${r.insumo}<span style="font-size:.65rem;color:var(--accent3);margin-left:6px;font-weight:700">#${r.solicitacao||''}</span>${obs?'<span style="font-size:.6rem;color:var(--muted);margin-left:6px">vencida</span>':''}</td>
       <td title="${r.obra}">${r.obra}</td>
       <td title="${r.familia}" style="color:var(--accent3);max-width:160px">${r.familia}</td>
       <td style="color:var(--accent3)">${r.data_necessidade}</td>
@@ -2041,7 +2047,7 @@ function gestao_renderPROG(){
       <td style="color:var(--accent);text-align:right;font-weight:700">${r.qt_pend}</td>
       <td>${gestao_pill('pill-gray',r.und)}</td>
       <td>${gestao_respBadge(r.responsavel)}</td>
-      <td><select class="g-cell-edit" style="width:145px" ${!window.HUB_CAN_EDIT?'disabled':''} onchange="gestao_onProgEdit('${k}','status',this.value)">${sSel}</select></td>
+      <td><select class="g-cell-edit" style="width:145px" ${!window.HUB_CAN_EDIT?'disabled':''} onchange="gestao_onProgEdit('${gestao_esc(k)}','status',this.value)">${sSel}</select></td>
     </tr>`;
   }).join(''):`<tr><td colspan="10" class="g-empty-state">Nenhum resultado</td></tr>`}
   </tbody></table><div class="g-pagination"><span>${filtered.length} itens</span><div class="g-page-btns">${gestao_mkPages(filtered.length,perPage,page,'gestao_setPROGPage')}</div></div></div>`;
@@ -2620,7 +2626,7 @@ function gestao_renderFORN(){
   el.innerHTML=`<div class="g-table-wrap"><table>
     <thead><tr><th>Fornecedor</th><th>Volume Comprado</th><th>Insumos (amostra)</th><th style="min-width:220px">Classificação</th><th style="min-width:140px">Mín. Faturamento ✏</th><th style="min-width:140px">Mínimo Fat.</th><th style="min-width:130px">Mínimo (R$) ✏</th></tr></thead>
     <tbody>${rows.length?rows.map(f=>{
-      const k=f.n.replace(/'/g,"\\'");
+      const k=gestao_esc(f.n);
       const btns=GESTAO_TIPOS.map(t=>`<button class="g-tipo-btn ${t} ${f.t===t?'active':''}" ${window.HUB_CAN_EDIT?`onclick="gestao_setTipo('${k}','${t}')"`:'disabled'}>${t}</button>`).join('');
       const tipoPill=f.t?`<span class="g-pill ${f.t==='ARMAZEM'?'pill-yellow':f.t==='FABRICA'?'pill-blue':f.t==='OUTRO'?'pill-purple':'pill-gray'}">${f.t}</span>`:'<span style="opacity:.3;font-size:.65rem">—</span>';
       return`<tr>
