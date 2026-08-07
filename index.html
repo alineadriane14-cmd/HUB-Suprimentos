@@ -1303,6 +1303,13 @@ html, body {
       <select id="gestao-prog-comprador" onchange="gestao_filterPROG()"><option value="">Todos Compradores</option><option value="ALINE">Aline</option><option value="MARCOS">Marcos</option></select>
       <select id="gestao-prog-obra" onchange="gestao_filterPROG()"><option value="">Todas as Obras</option></select>
       <select id="gestao-prog-familia" onchange="gestao_filterPROG()"><option value="">Todas as Famílias</option></select>
+      <div class="g-multiselect" id="gestao-prog-cotnum-ms">
+        <button type="button" class="g-multiselect-btn" onclick="gestao_toggleCotNumMenu(event)">
+          <span id="gestao-prog-cotnum-label">Todas as Cotações</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="g-multiselect-panel" id="gestao-prog-cotnum-panel" style="display:none;max-height:220px;overflow-y:auto"></div>
+      </div>
       <div class="g-multiselect" id="gestao-prog-status-ms">
         <button type="button" class="g-multiselect-btn" onclick="gestao_toggleStatusMenu(event)">
           <span id="gestao-prog-status-label">Todos os Status</span>
@@ -1736,6 +1743,7 @@ function gestao_buildProg(log){
         status: 'AGUARDANDO',
         cotacao: '',
         num_cotacao: '—',
+        cotacao_manual: '',
         tipo_forn,
         solicitacao: s.solicitacao
       };
@@ -1813,8 +1821,69 @@ document.addEventListener('click', (e)=>{
   const ms = document.getElementById('gestao-prog-status-ms');
   const panel = document.getElementById('gestao-prog-status-panel');
   if(panel && ms && !ms.contains(e.target)) panel.style.display='none';
+  const ms2 = document.getElementById('gestao-prog-cotnum-ms');
+  const panel2 = document.getElementById('gestao-prog-cotnum-panel');
+  if(panel2 && ms2 && !ms2.contains(e.target)) panel2.style.display='none';
 });
 function gestao_esc(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');}
+
+// ─── Multi-seleção de Nº Cotação na Programação ──────────────────
+let gestaoProgCotNumSel = []; // vazio = todas as cotações
+
+function gestao_toggleCotNumMenu(e){
+  e.stopPropagation();
+  const panel = document.getElementById('gestao-prog-cotnum-panel');
+  if(panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+function gestao_toggleCotNumOption(chk){
+  if(chk.checked){
+    if(!gestaoProgCotNumSel.includes(chk.value)) gestaoProgCotNumSel.push(chk.value);
+  } else {
+    gestaoProgCotNumSel = gestaoProgCotNumSel.filter(v=>v!==chk.value);
+  }
+  gestao_updateCotNumLabel();
+  gestao_filterPROG();
+}
+
+function gestao_updateCotNumLabel(){
+  const label = document.getElementById('gestao-prog-cotnum-label');
+  if(!label) return;
+  label.textContent = gestaoProgCotNumSel.length===0 ? 'Todas as Cotações'
+    : gestaoProgCotNumSel.length===1 ? gestaoProgCotNumSel[0]
+    : gestaoProgCotNumSel.length+' cotações selecionadas';
+}
+
+// Reconstrói a lista de checkboxes a partir dos valores de Nº Cotação
+// realmente presentes nos dados (campo é texto livre, sem enum fixo).
+// Usa DOM API (não innerHTML) para exibir valores digitados pelo usuário
+// com segurança, sem risco de injeção de HTML.
+function gestao_populateCotNumFilter(){
+  const panel = document.getElementById('gestao-prog-cotnum-panel');
+  if(!panel) return;
+  const values = [...new Set(gestaoDB.programacao.map(r=>r.cotacao_manual).filter(v=>v&&v.trim()))].sort();
+  gestaoProgCotNumSel = gestaoProgCotNumSel.filter(v=>values.includes(v));
+  panel.innerHTML='';
+  if(!values.length){
+    const empty = document.createElement('div');
+    empty.style.cssText='padding:6px 8px;font-size:.72rem;color:var(--g-muted);font-family:Syne,sans-serif;white-space:nowrap';
+    empty.textContent='Nenhuma cotação inserida ainda';
+    panel.appendChild(empty);
+  } else {
+    values.forEach(v=>{
+      const label = document.createElement('label');
+      const chk = document.createElement('input');
+      chk.type='checkbox';
+      chk.value=v;
+      chk.checked=gestaoProgCotNumSel.includes(v);
+      chk.onchange=function(){gestao_toggleCotNumOption(this);};
+      label.appendChild(chk);
+      label.appendChild(document.createTextNode(' '+v));
+      panel.appendChild(label);
+    });
+  }
+  gestao_updateCotNumLabel();
+}
 
 // ═══════════════════════════════════════════════════════════════
 // TAB
@@ -1945,6 +2014,7 @@ function gestao_onProgEdit(key,field,value){
     gestao_saveTimer = null;
     gestao_saveToFirebase(); // salva imediatamente — evita race condition com Firebase
   } else {
+    if(field==='cotacao_manual') gestao_populateCotNumFilter();
     gestao_scheduleSave();
   }
 }
@@ -1971,7 +2041,7 @@ function gestao_updateProgStats(){
   document.getElementById('gestao-sp5').textContent=total?Math.round(armazem/total*100)+'%':'—';
   document.getElementById('gestao-sp6').textContent=total?Math.round(fabrica/total*100)+'%':'—';
 }
-function gestao_rebuildProgFilters(){gestao_populateSelect('gestao-prog-obra',[...new Set(gestaoDB.programacao.map(r=>r.obra).filter(Boolean))].sort(),'Todas as Obras');gestao_populateSelect('gestao-prog-familia',[...new Set(gestaoDB.programacao.map(r=>r.familia).filter(f=>f&&f!=='—'))].sort(),'Todas as Famílias');}
+function gestao_rebuildProgFilters(){gestao_populateSelect('gestao-prog-obra',[...new Set(gestaoDB.programacao.map(r=>r.obra).filter(Boolean))].sort(),'Todas as Obras');gestao_populateSelect('gestao-prog-familia',[...new Set(gestaoDB.programacao.map(r=>r.familia).filter(f=>f&&f!=='—'))].sort(),'Todas as Famílias');gestao_populateCotNumFilter();}
 function gestao_calcDias(r){
   // Recalculate dias relative to GESTAO_TODAY using data_necessidade string
   if(!r.data_necessidade || r.data_necessidade === '—') return null;
@@ -1990,12 +2060,13 @@ function gestao_filterPROG(){
   const o=document.getElementById('gestao-prog-obra').value;
   const f=document.getElementById('gestao-prog-familia').value;
   const s=gestaoProgStatusSel;
+  const cn=gestaoProgCotNumSel;
   const sort=document.getElementById('gestao-prog-sort')?document.getElementById('gestao-prog-sort').value:'data_asc';
 
   const nsProg=(document.getElementById('gestao-prog-filter-sol')?.value||'').trim();
   let filtered = gestaoState.prog.data.filter(r=>
     (!q||r.insumo.toLowerCase().includes(q)||r.obra.toLowerCase().includes(q)||(r.familia||'').toLowerCase().includes(q))&&(!nsProg||String(r.solicitacao||'').includes(nsProg))&&
-    (!c||r.responsavel===c)&&(!o||r.obra===o)&&(!f||r.familia===f)&&(!s.length||s.includes(r.status))
+    (!c||r.responsavel===c)&&(!o||r.obra===o)&&(!f||r.familia===f)&&(!s.length||s.includes(r.status))&&(!cn.length||cn.includes(r.cotacao_manual))
   );
 
   // Data de corte: ultima importacao de solicitacoes
@@ -2041,7 +2112,7 @@ function gestao_renderPROG(){
   const el=document.getElementById('gestao-prog-content');if(!gestaoDB.programacao.length){el.innerHTML=gestao_emptyImport('Programação de Compras');return;}
   const{filtered,page,perPage}=gestaoState.prog;const rows=filtered.slice((page-1)*perPage,page*perPage);
   const statusOpts=['AGUARDANDO','PEDIDO EMITIDO','COTAÇÃO ENVIADA','COTAÇÃO RECEBIDA','CANCELAR INSUMO','PUXAR NOTA'];
-  el.innerHTML=`<div class="g-table-wrap"><table><thead><tr><th>Nº Cot.</th><th>Insumo</th><th>Obra</th><th>Família</th><th>Data Nec.</th><th>Dias</th><th>Qtd.</th><th>Und.</th><th>Comprador</th><th>Status${window.HUB_CAN_EDIT?' ✏':''}</th></tr></thead>
+  el.innerHTML=`<div class="g-table-wrap"><table><thead><tr><th>Nº Cot.</th><th>Nº Cotação${window.HUB_CAN_EDIT?' ✏':''}</th><th>Insumo</th><th>Obra</th><th>Família</th><th>Data Nec.</th><th>Dias</th><th>Qtd.</th><th>Und.</th><th>Comprador</th><th>Status${window.HUB_CAN_EDIT?' ✏':''}</th></tr></thead>
   <tbody>${rows.length?rows.map(r=>{
     const k=r._key;
     const obs=r._obsoleto;
@@ -2049,6 +2120,7 @@ function gestao_renderPROG(){
     const sSel=statusOpts.map(o=>`<option value="${o}"${r.status===o?' selected':''}>${o}</option>`).join('');
     return`<tr style="${rowStyle}">
       <td style="color:var(--accent3);font-weight:700">${r.num_cotacao||'—'}</td>
+      <td><input type="text" class="g-cell-edit" style="width:100px" value="${gestao_esc(r.cotacao_manual||'')}" placeholder="—" ${!window.HUB_CAN_EDIT?'disabled':''} onchange="gestao_onProgEdit('${gestao_esc(k)}','cotacao_manual',this.value.trim())"></td>
       <td title="${r.insumo}" style="max-width:320px;white-space:normal;line-height:1.4">${r.insumo}<span style="font-size:.65rem;color:var(--accent3);margin-left:6px;font-weight:700">#${r.solicitacao||''}</span>${obs?'<span style="font-size:.6rem;color:var(--muted);margin-left:6px">vencida</span>':''}</td>
       <td title="${r.obra}">${r.obra}</td>
       <td title="${r.familia}" style="color:var(--accent3);max-width:160px">${r.familia}</td>
@@ -2059,7 +2131,7 @@ function gestao_renderPROG(){
       <td>${gestao_respBadge(r.responsavel)}</td>
       <td><select class="g-cell-edit" style="width:145px" ${!window.HUB_CAN_EDIT?'disabled':''} onchange="gestao_onProgEdit('${gestao_esc(k)}','status',this.value)">${sSel}</select></td>
     </tr>`;
-  }).join(''):`<tr><td colspan="10" class="g-empty-state">Nenhum resultado</td></tr>`}
+  }).join(''):`<tr><td colspan="11" class="g-empty-state">Nenhum resultado</td></tr>`}
   </tbody></table><div class="g-pagination"><span>${filtered.length} itens</span><div class="g-page-btns">${gestao_mkPages(filtered.length,perPage,page,'gestao_setPROGPage')}</div></div></div>`;
 }
 
@@ -2083,7 +2155,7 @@ document.getElementById('gestao-forn-content').addEventListener('keydown', funct
 
 
 function gestao_exportProg(){
-  const rows=gestaoDB.programacao.map(r=>({'Insumo':r.insumo,'Obra':r.obra,'Família':r.familia,'Data Necessidade':r.data_necessidade,'Dias':r.dias,'Qt. Pendente':r.qt_pend,'Unidade':r.und,'Responsável':r.responsavel,'Status':r.status,'Cotação':r.cotacao,'Tipo Fornecedor':r.tipo_forn,'Solicitação':r.solicitacao}));
+  const rows=gestaoDB.programacao.map(r=>({'Nº Cot.':r.num_cotacao,'Nº Cotação':r.cotacao_manual,'Insumo':r.insumo,'Obra':r.obra,'Família':r.familia,'Data Necessidade':r.data_necessidade,'Dias':r.dias,'Qt. Pendente':r.qt_pend,'Unidade':r.und,'Responsável':r.responsavel,'Status':r.status,'Cotação':r.cotacao,'Tipo Fornecedor':r.tipo_forn,'Solicitação':r.solicitacao}));
   const ws=XLSX.utils.json_to_sheet(rows);const wb=XLSX.utils.book_new();
   wb.SheetNames.push('Programacao');
   wb.Sheets['Programacao'] = ws;
